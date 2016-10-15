@@ -1,0 +1,310 @@
+diff --git a/adblock.c b/adblock.c
+new file mode 100644
+index 0000000..f6c3130
+--- /dev/null
++++ b/adblock.c
+@@ -0,0 +1,185 @@
++#include "xombrero.h"
++
++gboolean is_separator(char c)
++{
++	if (isalpha(c))
++		return FALSE;
++	if (isdigit(c))
++		return FALSE;
++
++	switch (c) {
++	case '_':
++	case '-':
++	case '.':
++	case '%':
++		return FALSE;
++	}
++	return TRUE;
++}
++
++gboolean adblock_match(const char *pattern, const char *str)
++{
++	size_t i = 0, j = 0;
++
++	while (pattern[i]) {
++		if ( (pattern[i] == '^' && is_separator(str[j])) ||
++		     (pattern[i] == str[j]) ) {
++			i++;
++			j++;
++			continue;
++		}
++		if (str[j] == 0) {
++			return (pattern[i] == '|' && pattern[i+1] == 0);
++		}
++		if (pattern[i] == '*') {
++			if (adblock_match(&pattern[i+1], &str[j])) {
++				return TRUE;
++			} else {
++				j++;
++				continue;
++			}
++		}
++		return FALSE;
++	}
++	return TRUE;
++}
++
++gboolean adblock_match_pattern(const char *pattern, const char *str)
++{
++	size_t i = 0;
++
++	if (g_str_has_prefix(pattern, "||")) {
++		pattern += 2;
++		while (str[i] && isalpha(str[i]))
++			i++;
++		if (g_str_has_prefix(&str[i], "://")) {
++			i += 3;
++			while (str[i] && !is_separator(str[i])) {
++				if (adblock_match(pattern, &str[i]))
++					return TRUE;
++				i++;
++			}
++		}
++		return FALSE;
++	} else if (g_str_has_prefix(pattern, "|")) {
++		pattern++;
++		return adblock_match(pattern, str);
++	}
++
++	while (str[i]) {
++		if (adblock_match(pattern, &str[i])) {
++			return TRUE;
++		}
++		i++;
++	}
++	
++	return FALSE;
++}
++
++gboolean
++parse_line(struct ad_filter *filter, const char *line)
++{
++	size_t i = 0;
++	gboolean exception = FALSE;
++	char *pattern;
++	const char *opts;
++
++	if (strlen(line) == 0) {
++		return FALSE;
++	}
++
++	if (g_str_has_prefix(line, "!")) {
++		return FALSE;
++	}
++
++	if (g_str_has_prefix(line, "@@")) {
++		line += 2;
++		exception = TRUE;
++	}
++
++	if (g_strrstr(line, "##")) {
++		/* TODO: element selectors */
++		return FALSE;
++	}
++
++	for (i = 0; line[i]; i++) {
++		if (line[i] == '$') {
++			opts = &line[i+1];
++			return FALSE; /* TODO: use options */
++			break;
++		}
++	}
++	pattern = g_strndup(line, i);
++
++	if (exception) {
++		/* TODO: more reasonable allocation */
++		filter->n_exc_patterns++;
++		filter->exc_patterns = g_realloc(filter->exc_patterns, filter->n_exc_patterns * sizeof(char *));
++		filter->exc_patterns[filter->n_exc_patterns-1] = pattern;
++		DPRINTF("adblock: added exception '%s'\n", pattern);
++	} else {
++		filter->n_patterns++;
++		filter->patterns = g_realloc(filter->patterns, filter->n_patterns * sizeof(char *));
++		filter->patterns[filter->n_patterns-1] = pattern;
++		DPRINTF("adblock: added pattern '%s'\n", pattern);
++	}
++
++	return TRUE;
++}
++
++void
++adblock_init_filter(struct ad_filter *filter)
++{
++	if (!filter)
++		return;
++
++	filter->patterns = NULL;
++	filter->n_patterns = 0;
++
++	filter->exc_patterns = NULL;
++	filter->n_exc_patterns = 0;
++}
++
++int
++adblock_load_filter(struct ad_filter *filter, FILE *f)
++{
++	char *line = NULL;
++	char *line_s;
++	size_t len = 0;
++
++	while ((line = fgetln(f, &len))) {
++		if (line[len-1] == '\n')
++			len--;
++		line_s = g_strndup(line, len);
++		parse_line(filter, line_s);
++		g_free(line_s);
++	}
++
++	if (line)
++		free(line);
++
++	DPRINTF("adblock: %zu rules loaded\n", filter->n_patterns + filter->n_exc_patterns);
++	return 0;
++}
++
++gboolean
++adblock_uri_filter(const struct ad_filter *filter, const char *uri)
++{
++	size_t i;
++
++	for (i = 0; i < filter->n_exc_patterns; i++) {
++		if (adblock_match_pattern(filter->exc_patterns[i], uri)) {
++			DPRINTF("adblock: exception for uri '%s'; rule '%s'\n", uri, filter->exc_patterns[i]);
++			return TRUE;
++		}
++	}
++
++	for (i = 0; i < filter->n_patterns; i++) {
++		if (adblock_match_pattern(filter->patterns[i], uri)) {
++			DPRINTF("adblock: blocked uri '%s'\n", uri);
++			return FALSE;
++		}
++	}
++
++	return TRUE;
++}
+diff --git a/settings.c b/settings.c
+index 9267d69..d966af7 100644
+--- a/settings.c
++++ b/settings.c
+@@ -152,6 +152,7 @@ int		add_http_accept(struct settings *, char *);
+ int		add_cmd_alias(struct settings *, char *);
+ int		add_custom_uri(struct settings *, char *);
+ int		add_force_https(struct settings *, char *);
++int		add_adblock_filter(struct settings *s, char *value);
+ 
+ int		set_append_next(char *);
+ int		set_autofocus_onload(char *);
+@@ -370,7 +371,7 @@ struct special		s_mime = {
+ };
+ 
+ struct special		s_js = {
+-	add_js_wl,
++add_js_wl,
+ 	NULL,
+ 	walk_js_wl,
+ 	{ NULL }
+@@ -502,6 +503,13 @@ struct special		s_gnutls_priority_string = {
+ 	{ NULL }
+ };
+ 
++struct special		s_adblock = {
++	add_adblock_filter,
++	NULL,
++	NULL,
++	{ NULL }
++};
++
+ struct settings		rs[] = {
+ 	{ "allow_insecure_content",	XT_S_BOOL, 0,		&allow_insecure_content, NULL, NULL, NULL, set_allow_insecure_content, check_allow_insecure_content, TT_ALLOW_INSECURE_CONTENT },
+ 	{ "allow_insecure_scripts",	XT_S_BOOL, 0,		&allow_insecure_scripts, NULL, NULL, NULL, set_allow_insecure_scripts, check_allow_insecure_scripts, TT_ALLOW_INSECURE_SCRIPTS},
+@@ -598,6 +606,7 @@ struct settings		rs[] = {
+ 	{ "mime_type",			XT_S_STR, XT_SF_RUNTIME, NULL, NULL, &s_mime, NULL, NULL },
+ 	{ "pl_wl",			XT_S_STR, XT_SF_RUNTIME, NULL, NULL, &s_pl, NULL, NULL },
+ 	{ "user_agent",			XT_S_STR, XT_SF_RUNTIME, NULL, NULL, &s_ua, NULL, NULL },
++	{ "adblock_filter",		XT_S_STR, XT_SF_RUNTIME, NULL, NULL, &s_adblock, NULL, NULL},
+ };
+ 
+ int
+@@ -1941,6 +1950,22 @@ walk_cmd_alias(struct settings *s,
+ }
+ 
+ int
++add_adblock_filter(struct settings *s, char *value)
++{
++	char			path[PATH_MAX];
++	FILE			*f;
++
++	expand_tilde(path, sizeof(path), value);
++	if ((f = fopen(path, "r")) == NULL) {
++		return (-1);
++	}
++	adblock_load_filter(&ad_filter, f);
++	fclose(f);
++
++	return (0);
++}
++
++int
+ set_allow_insecure_content(char *value)
+ {
+ 	struct tab		*t;
+diff --git a/xombrero.c b/xombrero.c
+index 35d3911..ed69d93 100644
+--- a/xombrero.c
++++ b/xombrero.c
+@@ -4925,6 +4925,12 @@ webview_rrs_cb(WebKitWebView *wv, WebKitWebFrame *wf, WebKitWebResource *res,
+ 		return;
+ 	uri_s = soup_uri_to_string(uri, FALSE);
+ 
++	if (!adblock_uri_filter(&ad_filter, uri_s)) {
++		webkit_network_request_set_uri(request, "about:blank");
++		DPRINTF("adblock: blocked uri '%s'\n", uri_s);
++		goto done;
++	}
++
+ 	if (strcmp(uri->scheme, SOUP_URI_SCHEME_HTTP) == 0) {
+ 		if (strict_transport_check(uri->host) ||
+ 		    force_https_check(uri_s)) {
+@@ -8624,6 +8630,9 @@ main(int argc, char **argv)
+ 	g_free(path);
+ 	stylesheet = g_strdup(userstyle);
+ 
++	/* init adblock */
++	adblock_init_filter(&ad_filter);
++
+ 	/* set statically allocated (struct special) settings */
+ 	if (strlen(default_script) == 0)
+ 		expand_tilde(default_script, sizeof default_script,
+diff --git a/xombrero.h b/xombrero.h
+index 303ef1c..510c4e9 100644
+--- a/xombrero.h
++++ b/xombrero.h
+@@ -607,6 +607,21 @@ void		input_autofocus(struct tab *);
+ void		*input_check_mode(struct tab *);
+ int		command_mode(struct tab *, struct karg *);
+ 
++/* adblock */
++struct ad_filter {
++	char **patterns;
++	char **exc_patterns;
++
++	size_t n_patterns;
++	size_t n_exc_patterns;
++};
++
++struct ad_filter ad_filter;
++
++void adblock_init_filter(struct ad_filter *filter);
++int adblock_load_filter(struct ad_filter *filter, FILE *f);
++gboolean adblock_uri_filter(const struct ad_filter *filter, const char *uri);
++
+ /* settings */
+ #define XT_BM_NORMAL		(0)
+ #define XT_BM_WHITELIST		(1)

@@ -1,0 +1,43 @@
+diff --git a/base/src/crc.h b/base/src/crc.h
+index c9589ac..fd19b94 100644
+--- a/base/src/crc.h
++++ b/base/src/crc.h
+@@ -16,6 +16,6 @@ typedef unsigned short WORD;
+      ^ ((BYTE)octet)) & 0xff] ^ ((crc) >> 8))
+ 
+ DWORD updateCRC32(unsigned char ch, DWORD crc);
+-DWORD crc32(char *buf, size_t len);
++DWORD __attribute__ ((visibility ("internal"))) crc32(char *buf, size_t len);
+ 
+ #endif /* CRC__H */
+diff --git a/base/src/ipfixcol.c b/base/src/ipfixcol.c
+index 9129828..90d917d 100644
+--- a/base/src/ipfixcol.c
++++ b/base/src/ipfixcol.c
+@@ -318,7 +318,7 @@ int main (int argc, char* argv[])
+ 	for (aux_plugins = input_plugins; aux_plugins != NULL; aux_plugins = aux_plugins->next) {
+ 		input.xml_conf = &aux_plugins->config;
+ 		MSG_NOTICE(msg_module, "[%d] Opening input plugin: %s", proc_id, aux_plugins->config.file);
+-		input_plugin_handler = dlopen (input_plugins->config.file, RTLD_LAZY);
++		input_plugin_handler = dlopen (input_plugins->config.file, RTLD_LAZY | RTLD_DEEPBIND);
+ 		if (input_plugin_handler == NULL) {
+ 			MSG_ERROR(msg_module, "[%d] Unable to load input xml_conf (%s)", proc_id, dlerror());
+ 			continue;
+@@ -365,7 +365,7 @@ int main (int argc, char* argv[])
+ 	for (aux_plugins = storage_plugins; aux_plugins != NULL; aux_plugins = aux_plugins->next) {
+ 		MSG_NOTICE(msg_module, "[%d] Opening storage xml_conf: %s", proc_id, aux_plugins->config.file);
+ 
+-		storage_plugin_handler = dlopen (aux_plugins->config.file, RTLD_LAZY);
++		storage_plugin_handler = dlopen (aux_plugins->config.file, RTLD_LAZY | RTLD_DEEPBIND);
+ 		if (storage_plugin_handler == NULL) {
+ 			MSG_ERROR(msg_module, "[%d] Unable to load storage xml_conf (%s)", proc_id, dlerror());
+ 			continue;
+@@ -442,7 +442,7 @@ int main (int argc, char* argv[])
+ 	for (aux_plugins = intermediate_plugins; aux_plugins != NULL; aux_plugins = aux_plugins->next) {
+ 		MSG_NOTICE(msg_module, "[%d] Opening intermediate xml_conf: %s", proc_id, aux_plugins->config.file);
+ 
+-		intermediate_plugin_handler = dlopen(aux_plugins->config.file, RTLD_LAZY);
++		intermediate_plugin_handler = dlopen(aux_plugins->config.file, RTLD_LAZY | RTLD_DEEPBIND);
+ 		if (intermediate_plugin_handler == NULL) {
+ 			MSG_ERROR(msg_module, "[%d] Unable to load intermediate xml_conf (%s)", proc_id, dlerror());
+ 			continue;
