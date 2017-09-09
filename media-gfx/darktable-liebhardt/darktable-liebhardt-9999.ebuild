@@ -52,7 +52,7 @@ CDEPEND="
 	opencl? ( virtual/opencl )
 	openexr? ( media-libs/openexr:0= )
 	webp? ( media-libs/libwebp:0= )
-	sci-libs/fftw:3"
+	sci-libs/fftw"
 RDEPEND="${CDEPEND}
 	kwallet? ( || (
 		>=kde-frameworks/kwallet-5.34.0-r1
